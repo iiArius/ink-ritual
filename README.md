@@ -4,7 +4,7 @@
 
 **Ink Ritual** is a small, open-source browser study in Chinese brushwork. It turns stroke medians into layered brush fibers, then lets you replay, trace, tune, and draw the character yourself.
 
-体验地址：<https://iiarius.github.io/ink-ritual/>
+Try it on：<https://iiarius.github.io/ink-ritual/>
 
 The project is intentionally quiet and local: one canvas, one character, a handful of brush parameters, and no backend.
 
