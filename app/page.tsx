@@ -32,8 +32,9 @@ const INITIAL_SETTINGS: BrushSettings = {
 };
 
 const CANVAS_UNITS = 1000;
-const GUIDE_MIN = 100;
-const GUIDE_SIZE = 800;
+const GUIDE_MIN = 50;
+const GUIDE_SIZE = 900;
+const GUIDE_MAX = GUIDE_MIN + GUIDE_SIZE;
 
 function clamp(value: number, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -338,13 +339,13 @@ export default function InkPage() {
       ctx.strokeStyle = "rgba(169, 108, 101, .44)";
       ctx.beginPath();
       ctx.moveTo(500, GUIDE_MIN);
-      ctx.lineTo(500, 900);
+      ctx.lineTo(500, GUIDE_MAX);
       ctx.moveTo(GUIDE_MIN, 500);
-      ctx.lineTo(900, 500);
+      ctx.lineTo(GUIDE_MAX, 500);
       ctx.moveTo(GUIDE_MIN, GUIDE_MIN);
-      ctx.lineTo(900, 900);
-      ctx.moveTo(900, GUIDE_MIN);
-      ctx.lineTo(GUIDE_MIN, 900);
+      ctx.lineTo(GUIDE_MAX, GUIDE_MAX);
+      ctx.moveTo(GUIDE_MAX, GUIDE_MIN);
+      ctx.lineTo(GUIDE_MIN, GUIDE_MAX);
       ctx.stroke();
       ctx.setLineDash([]);
     }
