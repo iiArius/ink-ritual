@@ -35,6 +35,14 @@ npm run start   # serve the production build
 npm run lint    # check the source
 ```
 
+## Deploy to GitHub Pages
+
+Every push to `main` runs [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml). It builds the static site with Vinext and publishes `dist/client` through GitHub Pages.
+
+For the first deployment, set the repository's Pages source to **GitHub Actions** under `Settings → Pages → Build and deployment`. The live site is:
+
+<https://iiArius.github.io/ink-ritual/>
+
 ## How it works
 
 The default character `風` is stored locally in `app/ink-data.ts`. For another character, Ink Ritual requests the corresponding median paths from [`hanzi-writer-data`](https://github.com/chanind/hanzi-writer-data) through jsDelivr. The renderer keeps those paths in a 1,000 × 1,000 coordinate space and maps them into the canvas once, including the source data's bottom-left coordinate system.

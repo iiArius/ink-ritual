@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+const siteBasePath = process.env.GITHUB_ACTIONS === "true" ? "/ink-ritual" : "";
+
 export const metadata: Metadata = {
   title: "Ink Ritual — Chinese brushwork study",
   description: "A small generative study in Chinese brushwork.",
   icons: {
-    icon: "/favicon.svg",
+    icon: `${siteBasePath}/favicon.svg`,
   },
 };
 
