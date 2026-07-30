@@ -4,6 +4,8 @@
 
 **Ink Ritual** is a small, open-source browser study in Chinese brushwork. It turns stroke medians into layered brush fibers, then lets you replay, trace, tune, and draw the character yourself.
 
+体验地址：<https://iiarius.github.io/ink-ritual/>
+
 The project is intentionally quiet and local: one canvas, one character, a handful of brush parameters, and no backend.
 
 ## What it does
@@ -41,7 +43,7 @@ Every push to `main` runs [`.github/workflows/deploy-pages.yml`](.github/workflo
 
 For the first deployment, set the repository's Pages source to **GitHub Actions** under `Settings → Pages → Build and deployment`. The live site is:
 
-<https://iiArius.github.io/ink-ritual/>
+<https://iiarius.github.io/ink-ritual/>
 
 ## How it works
 
