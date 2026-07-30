@@ -32,8 +32,8 @@ const INITIAL_SETTINGS: BrushSettings = {
 };
 
 const CANVAS_UNITS = 1000;
-const GUIDE_MIN = 50;
-const GUIDE_SIZE = 900;
+const GUIDE_MIN = 0;
+const GUIDE_SIZE = 1000;
 const GUIDE_MAX = GUIDE_MIN + GUIDE_SIZE;
 
 function clamp(value: number, min = 0, max = 1) {
@@ -309,7 +309,7 @@ export default function InkPage() {
     ctx.fillStyle = "#f4f1e7";
     ctx.fillRect(0, 0, width, height);
 
-    const board = Math.min(width, height) * 0.91;
+    const board = Math.min(width, height);
     const offsetX = (width - board) / 2;
     const offsetY = (height - board) / 2;
     ctx.save();
@@ -406,7 +406,7 @@ export default function InkPage() {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    const board = Math.min(rect.width, rect.height) * 0.91;
+    const board = Math.min(rect.width, rect.height);
     const offsetX = (rect.width - board) / 2;
     const offsetY = (rect.height - board) / 2;
     const x = ((event.clientX - rect.left - offsetX) / board) * CANVAS_UNITS;
