@@ -11,7 +11,13 @@ import {
 import styles from "./ink.module.css";
 import { FENG_DATA, type InkCharacter, type InkPoint } from "./ink-data";
 
-type DrawPoint = { x: number; y: number };
+type DrawPoint = {
+  x: number;
+  y: number;
+  pressure?: number;
+  velocity?: number;
+  timestamp?: number;
+};
 type Surface = "plain" | "grid" | "scroll";
 type Mode = "write" | "trace";
 
@@ -42,6 +48,39 @@ function clamp(value: number, min = 0, max = 1) {
 
 function distance(a: DrawPoint, b: DrawPoint) {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function interpolatePoint(a: DrawPoint, b: DrawPoint, ratio: number): DrawPoint {
+  const point: DrawPoint = {
+    x: a.x + (b.x - a.x) * ratio,
+    y: a.y + (b.y - a.y) * ratio,
+  };
+  if (a.pressure !== undefined || b.pressure !== undefined) {
+    point.pressure = (a.pressure ?? b.pressure ?? 0.5) + ((b.pressure ?? a.pressure ?? 0.5) - (a.pressure ?? b.pressure ?? 0.5)) * ratio;
+  }
+  if (a.velocity !== undefined || b.velocity !== undefined) {
+    point.velocity = (a.velocity ?? b.velocity ?? 0) + ((b.velocity ?? a.velocity ?? 0) - (a.velocity ?? b.velocity ?? 0)) * ratio;
+  }
+  if (a.timestamp !== undefined || b.timestamp !== undefined) {
+    point.timestamp = (a.timestamp ?? b.timestamp ?? 0) + ((b.timestamp ?? a.timestamp ?? 0) - (a.timestamp ?? b.timestamp ?? 0)) * ratio;
+  }
+  return point;
+}
+
+function densifyPath(path: DrawPoint[], spacing = 11): DrawPoint[] {
+  if (path.length < 2) return path;
+  const dense: DrawPoint[] = [path[0]];
+  for (let index = 1; index < path.length; index += 1) {
+    const previous = path[index - 1];
+    const current = path[index];
+    const segmentLength = distance(previous, current);
+    if (segmentLength < 0.01) continue;
+    const steps = Math.max(1, Math.ceil(segmentLength / spacing));
+    for (let step = 1; step <= steps; step += 1) {
+      dense.push(interpolatePoint(previous, current, step / steps));
+    }
+  }
+  return dense;
 }
 
 function pathLength(path: InkPoint[]) {
@@ -94,6 +133,93 @@ function drawPath(ctx: CanvasRenderingContext2D, path: DrawPoint[]) {
   ctx.stroke();
 }
 
+function drawVariableStroke(ctx: CanvasRenderingContext2D, path: DrawPoint[], widths: number[]) {
+  for (let index = 1; index < path.length; index += 1) {
+    const previous = path[index - 1];
+    const current = path[index];
+    if (distance(previous, current) < 0.01) continue;
+    ctx.lineWidth = Math.max(0.65, ((widths[index - 1] ?? 1) + (widths[index] ?? 1)) * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(previous.x, previous.y);
+    ctx.lineTo(current.x, current.y);
+    ctx.stroke();
+  }
+}
+
+function normalAt(path: DrawPoint[], index: number) {
+  const previous = path[Math.max(0, index - 1)];
+  const next = path[Math.min(path.length - 1, index + 1)];
+  const dx = next.x - previous.x;
+  const dy = next.y - previous.y;
+  const length = Math.hypot(dx, dy) || 1;
+  return { x: -dy / length, y: dx / length };
+}
+
+function turnAmount(path: DrawPoint[], index: number) {
+  if (index <= 0 || index >= path.length - 1) return 0;
+  const previous = path[index - 1];
+  const current = path[index];
+  const next = path[index + 1];
+  const incoming = Math.atan2(current.y - previous.y, current.x - previous.x);
+  const outgoing = Math.atan2(next.y - current.y, next.x - current.x);
+  let delta = Math.abs(outgoing - incoming);
+  if (delta > Math.PI) delta = Math.PI * 2 - delta;
+  return clamp(delta / Math.PI);
+}
+
+function smoothStep(value: number) {
+  const eased = clamp(value);
+  return eased * eased * (3 - 2 * eased);
+}
+
+function brushProfile(path: DrawPoint[], settings: BrushSettings, strokeIndex: number) {
+  const points = densifyPath(path);
+  if (points.length < 2) return { points, widths: points.map(() => 1) };
+
+  const random = randomGenerator(settings.seed * 97 + strokeIndex * 9973);
+  const cumulativeLengths = [0];
+  for (let index = 1; index < points.length; index += 1) {
+    cumulativeLengths.push(cumulativeLengths[index - 1] + distance(points[index - 1], points[index]));
+  }
+  const total = cumulativeLengths[cumulativeLengths.length - 1] || 1;
+  const roughness = 1 - settings.formality;
+  const baseWidth = 24 + settings.weight * 72;
+  const widths = points.map((point, index) => {
+    const progress = cumulativeLengths[index] / total;
+    const turn = turnAmount(points, index);
+    const inputPressure = point.pressure ?? clamp(
+      0.52
+        + settings.weight * 0.1
+        + Math.sin(progress * Math.PI * (1.25 + settings.speed * 0.8) + strokeIndex * 0.85) * 0.1
+        + turn * 0.1,
+    );
+    const pressure = clamp(inputPressure + (random() - 0.5) * (0.1 + roughness * 0.24));
+    const velocity = point.velocity ?? clamp(
+      0.16
+        + Math.abs(Math.sin(progress * Math.PI * (2.1 + settings.speed) + strokeIndex)) * 0.44
+        + settings.speed * 0.18,
+    );
+    const entry = smoothStep(progress / 0.075);
+    const exit = smoothStep((1 - progress) / 0.085);
+    const taper = 0.48 + entry * exit * 0.52;
+    const speedFactor = 1 - velocity * (0.18 + settings.speed * 0.22);
+    const turnFactor = 1 + turn * (0.08 + settings.weight * 0.12);
+    const texture = 1 + (random() - 0.5) * (0.08 + roughness * 0.24);
+    return Math.max(
+      1.2,
+      baseWidth
+        * (0.58 + pressure * 0.86)
+        * speedFactor
+        * turnFactor
+        * taper
+        * texture
+        * (0.92 + settings.wetness * 0.14),
+    );
+  });
+
+  return { points, widths };
+}
+
 function drawBrushStroke(
   ctx: CanvasRenderingContext2D,
   path: DrawPoint[],
@@ -103,78 +229,77 @@ function drawBrushStroke(
 ) {
   if (path.length < 2) return;
 
-  const random = randomGenerator(settings.seed * 97 + strokeIndex * 9973);
-  const baseWidth = 24 + settings.weight * 48;
-  const speedWidth = 1.08 - settings.speed * 0.25;
-  const spread = baseWidth * (0.52 + settings.wetness * 0.65);
-  const jitter = (1 - settings.formality) * 8;
-  const fibers = 22 + Math.round(settings.weight * 24);
+  const { points, widths } = brushProfile(path, settings, strokeIndex);
+  if (points.length < 2) return;
+
+  const random = randomGenerator(settings.seed * 193 + strokeIndex * 17749);
+  const roughness = 1 - settings.formality;
+  const fibers = 13 + Math.round(settings.weight * 14);
 
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
+  // A broad, translucent edge imitates ink spreading into paper fibers.
+  ctx.strokeStyle = `rgba(42, 38, 30, ${(0.045 + settings.wetness * 0.08) * opacity})`;
+  drawVariableStroke(ctx, points, widths.map((width) => width * (1.12 + settings.wetness * 0.16)));
+
+  // The loaded body is pressure-sensitive: every segment gets its own width.
+  ctx.strokeStyle = `rgba(29, 27, 23, ${(0.27 + settings.wetness * 0.16) * opacity})`;
+  drawVariableStroke(ctx, points, widths);
+
+  // A darker inner pass keeps the stroke legible while the outer edge stays soft.
+  ctx.strokeStyle = `rgba(22, 21, 18, ${(0.19 + settings.wetness * 0.1) * opacity})`;
+  drawVariableStroke(ctx, points, widths.map((width) => width * (0.48 + settings.wetness * 0.1)));
+
+  // Individual bristles drift around the pressure-shaped body.
   for (let fiber = 0; fiber < fibers; fiber += 1) {
-    const offset = (fiber / Math.max(1, fibers - 1) - 0.5) * spread;
+    const offset = fiber / Math.max(1, fibers - 1) - 0.5;
     const fiberPath: DrawPoint[] = [];
 
-    path.forEach((point, index) => {
-      const previous = path[Math.max(0, index - 1)];
-      const next = path[Math.min(path.length - 1, index + 1)];
-      const dx = next.x - previous.x;
-      const dy = next.y - previous.y;
-      const length = Math.hypot(dx, dy) || 1;
-      const normalX = -dy / length;
-      const normalY = dx / length;
-      const localJitter = (random() - 0.5) * jitter;
-      const taper = Math.sin((index / (path.length - 1)) * Math.PI) * 0.45 + 0.55;
+    points.forEach((point, index) => {
+      const normal = normalAt(points, index);
+      const localJitter = (random() - 0.5) * widths[index] * (0.01 + roughness * 0.035);
+      const alongJitter = (random() - 0.5) * (0.5 + roughness * 1.7);
       fiberPath.push({
-        x: point.x + normalX * (offset * taper + localJitter),
-        y: point.y + normalY * (offset * taper + localJitter),
+        x: point.x + normal.x * (offset * widths[index] * (0.52 + roughness * 0.08) + localJitter) + alongJitter,
+        y: point.y + normal.y * (offset * widths[index] * (0.52 + roughness * 0.08) + localJitter) + alongJitter,
       });
     });
 
-    ctx.strokeStyle = `rgba(31, 28, 23, ${(0.18 + settings.wetness * 0.05) * opacity})`;
-    ctx.lineWidth = Math.max(0.8, baseWidth * (0.022 + random() * 0.06) * speedWidth);
+    const averageWidth = widths.reduce((sum, width) => sum + width, 0) / widths.length;
+    ctx.strokeStyle = `rgba(35, 32, 26, ${(0.018 + roughness * 0.028 + (1 - settings.wetness) * 0.014) * opacity})`;
+    ctx.lineWidth = Math.max(0.45, averageWidth * (0.008 + random() * 0.015));
     drawPath(ctx, fiberPath);
   }
 
-  // A translucent body keeps the fibers reading as one loaded brush.
-  ctx.strokeStyle = `rgba(30, 27, 22, ${0.39 * opacity})`;
-  ctx.lineWidth = baseWidth * (0.28 + settings.wetness * 0.1) * speedWidth;
-  drawPath(ctx, path);
-  ctx.strokeStyle = `rgba(30, 27, 22, ${0.22 * opacity})`;
-  ctx.lineWidth = baseWidth * (0.5 + settings.wetness * 0.08) * speedWidth;
-  drawPath(ctx, path);
-
-  // Pooling at the ends sells the slow, wet ink effect.
-  const endRadius = baseWidth * (0.18 + settings.wetness * 0.16);
-  ctx.fillStyle = `rgba(29, 26, 21, ${0.52 * opacity})`;
-  for (const point of [path[0], path[path.length - 1]]) {
+  // Slow starts and stops leave a little more ink on the paper.
+  ctx.fillStyle = `rgba(25, 23, 19, ${(0.12 + settings.wetness * 0.16) * opacity})`;
+  for (const [index, point] of [points[0], points[points.length - 1]].entries()) {
     ctx.beginPath();
-    ctx.arc(point.x, point.y, endRadius * (0.76 + random() * 0.34), 0, Math.PI * 2);
+    const radius = (widths[index === 0 ? 0 : widths.length - 1] ?? 1) * (0.28 + settings.wetness * 0.08);
+    ctx.arc(point.x, point.y, radius * (0.88 + random() * 0.2), 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Dry bristles split at the terminal point.
-  const terminal = path[path.length - 1];
-  const beforeTerminal = path[path.length - 2];
-  const dx = terminal.x - beforeTerminal.x;
-  const dy = terminal.y - beforeTerminal.y;
-  const terminalLength = Math.hypot(dx, dy) || 1;
-  for (let index = 0; index < 10; index += 1) {
-    const spreadAngle = (random() - 0.5) * (0.35 + (1 - settings.wetness) * 0.8);
-    const angle = Math.atan2(dy, dx) + spreadAngle;
-    const length = baseWidth * (0.25 + random() * (0.25 + (1 - settings.wetness) * 0.45));
+  // Dry paper splits the final few bristles into a soft feathered tip.
+  const terminal = points[points.length - 1];
+  const beforeTerminal = points[points.length - 2];
+  const terminalAngle = Math.atan2(terminal.y - beforeTerminal.y, terminal.x - beforeTerminal.x);
+  const terminalNormal = normalAt(points, points.length - 1);
+  const terminalWidth = widths[widths.length - 1] ?? 1;
+  const featherCount = 5 + Math.round(roughness * 7);
+  for (let index = 0; index < featherCount; index += 1) {
+    const spreadAngle = (random() - 0.5) * (0.18 + roughness * 0.8);
+    const angle = terminalAngle + spreadAngle;
+    const length = terminalWidth * (0.12 + random() * (0.18 + roughness * 0.52));
+    const offset = (random() - 0.5) * terminalWidth * 0.42;
     ctx.beginPath();
-    ctx.moveTo(terminal.x, terminal.y);
-    ctx.lineTo(
-      terminal.x + (dx / terminalLength) * length * Math.cos(angle),
-      terminal.y + (dy / terminalLength) * length * Math.sin(angle),
-    );
-    ctx.strokeStyle = `rgba(50, 44, 35, ${(0.015 + (1 - settings.wetness) * 0.03) * opacity})`;
-    ctx.lineWidth = 0.8 + random() * 1.5;
+    ctx.moveTo(terminal.x + terminalNormal.x * offset, terminal.y + terminalNormal.y * offset);
+    ctx.lineTo(terminal.x + Math.cos(angle) * length, terminal.y + Math.sin(angle) * length);
+    ctx.strokeStyle = `rgba(49, 44, 35, ${(0.018 + roughness * 0.035) * opacity})`;
+    ctx.lineWidth = 0.55 + random() * 1.2;
     ctx.stroke();
   }
   ctx.restore();
@@ -387,6 +512,11 @@ export default function InkPage() {
       drawBrushStroke(ctx, manualStroke, settings, index + data.medians.length, 0.95);
     }
 
+    const activeStroke = activePathRef.current;
+    if (activeStroke && activeStroke.length > 1) {
+      drawBrushStroke(ctx, activeStroke, settings, data.medians.length + manualStrokes.length, 1);
+    }
+
     ctx.restore();
   }, [data, manualStrokes, mode, revealedLength, settings, strokeLengths, surface, teach]);
 
@@ -412,7 +542,12 @@ export default function InkPage() {
     const x = ((event.clientX - rect.left - offsetX) / board) * CANVAS_UNITS;
     const y = CANVAS_UNITS - ((event.clientY - rect.top - offsetY) / board) * CANVAS_UNITS;
     if (x < GUIDE_MIN || x > GUIDE_MIN + GUIDE_SIZE || y < GUIDE_MIN || y > GUIDE_MIN + GUIDE_SIZE) return null;
-    return { x, y };
+    return {
+      x,
+      y,
+      pressure: event.pressure > 0 ? clamp(event.pressure) : event.pointerType === "mouse" ? 0.56 : 0.72,
+      timestamp: event.timeStamp || performance.now(),
+    };
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -427,8 +562,14 @@ export default function InkPage() {
     const activePath = activePathRef.current;
     const point = pointFromEvent(event);
     if (!activePath || !point) return;
-    if (distance(activePath[activePath.length - 1], point) > 3) {
-      activePath.push(point);
+    const previous = activePath[activePath.length - 1];
+    const movement = distance(previous, point);
+    if (movement > 2.4) {
+      const elapsed = Math.max(1, (point.timestamp ?? performance.now()) - (previous.timestamp ?? performance.now()));
+      activePath.push({
+        ...point,
+        velocity: clamp((movement / elapsed) / 2.4),
+      });
       drawCanvas();
     }
   };
@@ -436,12 +577,12 @@ export default function InkPage() {
   const handlePointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const activePath = activePathRef.current;
     activePathRef.current = null;
-    if (!activePath || activePath.length < 2) return;
     try {
       event.currentTarget.releasePointerCapture(event.pointerId);
     } catch {
       // The pointer may already have been released by the browser.
     }
+    if (!activePath || activePath.length < 2) return;
     const nextStroke = data.medians[Math.min(manualStrokes.length, data.medians.length - 1)];
     setManualStrokes((strokes) => [...strokes, activePath]);
     if (nextStroke) setAccuracy(scorePath(activePath, nextStroke));
